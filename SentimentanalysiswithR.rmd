@@ -1,0 +1,186 @@
+---
+title: "Sentiment analysis with R"
+author: "Kiyana Mirbaghestan"
+date: "2025-06-11"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Requiered Packages
+```{r}
+library(dplyr)
+library(quanteda)
+library(quanteda.textmodels)
+library(tidytext)
+library(ggplot2)
+library(stringr)
+library(wordcloud)
+library(reshape2)
+library(caret)
+library(e1071)
+library(SparseM)
+```
+
+## Read and prepare data
+```{r}
+text_data<-read.csv("C:/Users/NoteBook/Documents/sentiment_analysis_data.csv",stringsAsFactors = FALSE)
+length(which(!complete.cases(text_data)))
+text_data <- text_data[,c("Text","sentiment")]
+
+colnames(text_data) <- c( "text","Category")
+attach(text_data)
+data2<-data.frame(Category,text)
+```
+
+#Visualization of  Titles 
+```{r}
+data2%>%
+  count(Category,sort=TRUE)%>%
+  filter(n>10)%>%
+  mutate(word=reorder(Category,n))%>%
+  ggplot(aes(Category,n))+
+  geom_col()+
+  xlab(NULL)+
+  coord_flip()
+```
+
+#Categorize data
+```{r}
+text_data$Category[text_data$Category=="Negative"] <- "negative" 
+text_data$Category[text_data$Category=="Positive"] <- "positive" 
+text_data$Category[text_data$Category=="Neutre"] <- "positive" 
+head(text_data)
+```
+
+#Visualization of  Titles
+```{r}
+text_data%>%
+  count(Category,sort=TRUE)%>%
+  filter(n>10)%>%
+  mutate(word=reorder(Category,n))%>%
+  ggplot(aes(Category,n))+
+  geom_col()+
+  xlab(NULL)+
+  coord_flip()
+
+```
+
+#Most common words
+```{r}
+data2 %>%
+  group_by(Category) %>%
+  mutate(linenumber = row_number(),
+         chapter = cumsum(str_detect(text, regex("^chapter[\\divxlc]", ignore_case = TRUE)))) %>%
+  ungroup()
+
+tidy<-data2 %>%
+  unnest_tokens(word,text)
+data("stop_words")
+tidy<-tidy%>%
+  anti_join(stop_words)
+```
+
+##Most common words
+```{r}
+a<-tidy%>%
+  count(word,sort=TRUE)
+head(a)
+tidy%>%
+  count(word,sort=TRUE)%>%
+  filter(n>500)%>%
+  mutate(word=reorder(word,n))%>%
+  ggplot(aes(word,n))+
+  geom_col()+
+  xlab(NULL)+
+  coord_flip()
+
+tidy %>%
+  anti_join(stop_words) %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 50))
+
+tidy %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("red", "green"),
+                   max.words = 100)
+
+```
+
+
+```{r}
+set.seed(2012)
+text_data<-text_data[sample(nrow(text_data)),]
+text_corpus <- corpus(text_data$text)
+# storing the label
+docvars(text_corpus, "Category") <- text_data$Category
+```
+
+#separating Train and test data/ preprocessing
+```{r}
+text.train<-text_data[1:as.integer(nrow(text_data) * 0.7),]
+text.test<-text_data[(as.integer(nrow(text_data) * 0.7)+1):nrow(text_data),]
+
+# Making corpus
+text_corpus <- corpus(text)
+
+# Converting corpus to tokens
+text_tokens <- tokens(text_corpus,
+                      remove_punct = TRUE,
+                      remove_numbers = TRUE,
+                      remove_symbols = TRUE)
+
+# Eliminating stopwords
+text_tokens <- tokens_remove(text_tokens, stopwords("english"))
+
+# stemming
+text_tokens <- tokens_wordstem(text_tokens)
+
+# Making DFM
+text.dfm <- dfm(text_tokens)
+
+# Trim the rare words
+text.dfm <- dfm_trim(text.dfm, sparsity = 0.97)
+
+# Eliminating the rare behaviours (sparse terms)
+text.dfm <- dfm_trim(text.dfm, sparsity = 0.97)
+
+# (sparse terms)
+text.dfm <- dfm_trim(text.dfm, sparsity = 0.97)
+
+# Setting the term frequency according to its prevelance in the document
+text.dfm <- dfm_tfidf(text.dfm, base = 2, scheme_tf = "prop") 
+
+text.dfm.train <- text.dfm[1:as.integer(nrow(text.dfm) * 0.7),]  
+text.dfm.test <- text.dfm[(as.integer(nrow(text.dfm) * 0.7)+1):nrow(text.dfm),]  
+```
+
+##models
+```{r}
+text.classifier.nb <- textmodel_nb(text.dfm.train, text.train$Category,prior = "termfreq")  
+#text.classifier.svm <- textmodel_svm(text.dfm.train, text.train$Category)
+text.classifier.svmlin <- textmodel_svmlin(text.dfm.train, text.train$Category)
+text.train$Category <- as.factor(text.train$Category)
+text.classifier.svm <- svm(x = text.dfm.train,
+                 y = text.train$Category,
+                 kernel = "radial")
+
+
+
+text.predictions.nb <- data.frame(predict(text.classifier.nb, newdata = text.dfm.test)  )
+conf.nb<- table(text.predictions.nb$predict.text.classifier.nb..newdata...text.dfm.test., text.test$Category)
+
+text.predictions.svm <- data.frame(predict(text.classifier.svm, newdata = text.dfm.test)  )
+conf.svm<- table(text.predictions.svm$predict.text.classifier.svm..newdata...text.dfm.test., text.test$Category)
+
+text.predictions.svmlin <- data.frame(predict(text.classifier.svmlin, newdata = text.dfm.test)  )
+conf.svmlin<- table(text.predictions.svmlin$predict.text.classifier.svmlin..newdata...text.dfm.test., text.test$Category)
+
+
+confusionMatrix(conf.nb,mode = "everything", positive = "positive")
+confusionMatrix(conf.svm,mode = "everything", positive = "positive")
+confusionMatrix(conf.svmlin,mode = "everything", positive = "positive")
+```
